@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nakama}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdb}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nakama:
+    image: registry.heroiclabs.com/heroiclabs/nakama:3.21.1
+    entrypoint:
+      - "/bin/sh"
+      - "-ecx"
+      - >
+        /nakama/nakama migrate up --database.address postgres:${POSTGRES_PASSWORD:-localdb}@postgres:5432/${POSTGRES_DB:-nakama} &&
+        exec /nakama/nakama --name nakama1 
+        --database.address postgres:${POSTGRES_PASSWORD:-localdb}@postgres:5432/${POSTGRES_DB:-nakama}
+        --logger.level ${NAKAMA_LOG_LEVEL:-INFO}
+        --session.token_expiry_sec ${NAKAMA_SESSION_EXPIRY:-7200}
+        --runtime.path /nakama/data/modules
+        --runtime.http_key ${NAKAMA_HTTP_KEY:-defaultkey}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "7349:7349"   # client API
+      - "7350:7350"   # console
+      - "7351:7351"   # grpc
+    volumes:
+      - ./backend/nakama-modules:/nakama/data/modules
+    restart: unless-stopped
+    environment:
+      - NAKAMA_RUNTIME_HTTP_KEY=${NAKAMA_HTTP_KEY:-defaultkey}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7350/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./ssl:/etc/ssl/certs
+    restart: unless-stopped
+    depends_on:
+      - nakama
+
+volumes:
+  pgdata:
